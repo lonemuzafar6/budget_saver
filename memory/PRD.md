@@ -10,7 +10,15 @@ A personal expense tracker for India that turns UPI payment screenshots (GPay, P
 - **Categories** (fixed 8): Food, Groceries, Shopping, Transport, Bills, Entertainment, Health, Other. Each with its own icon + color.
 - **Dashboard** (Home tab) → monthly total + donut chart + recent transactions.
 - **Transactions tab** → search, category chip filter (horizontal, sticky), swipe-to-delete, tap to edit.
-- **Budgets tab** → per-category monthly limit, progress bar that turns orange ≥80%, red ≥100%.
+- **Budgets** (Budgets tab):
+  - **Total monthly budget** card with editable amount + alert threshold (50–100% picker).
+  - **Per-category budgets** with their own configurable alert thresholds (50–100%), independent of each other.
+  - Progress bar coloring adapts to each budget's threshold: green normally → orange at threshold → red at 100%.
+- **Alerts**:
+  - In-app alert banner on Home (top of dashboard) when any budget crosses its threshold.
+  - Bell icon with badge count in Home + Budgets headers.
+  - Dedicated `/alerts` screen listing all active alerts (overall + per-category) with severity pill, progress bar, spent-of-limit, and percent.
+  - Two severities: `warning` (≥ threshold) and `over` (≥ 100%).
 - **Insights tab** → bar chart per category, top-5 with % share.
 - **Currency** INR (₹).
 - **No authentication** — single-user local app.
@@ -24,7 +32,9 @@ A personal expense tracker for India that turns UPI payment screenshots (GPay, P
 - `GET /api/categories`
 - `GET|POST|PATCH|DELETE /api/expenses[/{id}]` (filters: `?category=&month=&q=`)
 - `GET /api/dashboard?month=YYYY-MM`
-- `GET|POST /api/budgets`, `DELETE /api/budgets/{id}`
+- `GET|POST|DELETE /api/settings/total-budget?month=YYYY-MM` — overall monthly budget + alert threshold
+- `GET /api/alerts?month=YYYY-MM` — list of active alerts (overall + category, severity sorted)
+- `GET|POST /api/budgets`, `DELETE /api/budgets/{id}` — per-category budgets now accept `alert_threshold` (50-100)
 - `POST /api/scan-screenshot` { image_base64, mime_type } → { amount, merchant, date, category, success }
 
 ## Tested
