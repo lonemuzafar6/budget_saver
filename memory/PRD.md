@@ -1,4 +1,4 @@
-# SS Spend Tracker — Product Requirements Document
+# BudgetSnavings — Product Requirements Document
 
 ## Vision
 A personal expense tracker for India that turns UPI payment screenshots (GPay, PhonePe, Paytm, BHIM, Amazon Pay) into auto-categorised expenses. No data entry — just snap, review, save.

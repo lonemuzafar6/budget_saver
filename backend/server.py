@@ -141,7 +141,7 @@ def _serialize(doc: dict) -> dict:
 # ---------- Routes ----------
 @api_router.get("/")
 async def root():
-    return {"message": "SS Spend Tracker API"}
+    return {"message": "BudgetSnavings API"}
 
 
 @api_router.get("/categories")

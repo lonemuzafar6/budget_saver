@@ -93,7 +93,7 @@ export default function HomeScreen() {
     <SafeAreaView edges={['top']} style={styles.container} testID="home-screen">
       <View style={styles.header}>
         <View>
-          <Text style={styles.headerTitle}>Dashboard</Text>
+          <Text style={styles.headerTitle}>BudgetSnavings</Text>
           <Text style={styles.headerSub}>{monthLabel(currentMonth())}</Text>
         </View>
         <View style={styles.headerActions}>
@@ -288,7 +288,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACING.lg,
     paddingVertical: SPACING.md,
   },
-  headerTitle: { fontSize: 28, fontWeight: '800', color: COLORS.onSurface },
+  headerTitle: { fontSize: 24, fontWeight: '800', color: COLORS.onSurface, letterSpacing: -0.3 },
   headerSub: { fontSize: 13, color: COLORS.muted, marginTop: 2 },
   headerActions: { flexDirection: 'row', gap: 8 },
   headerBtn: {
