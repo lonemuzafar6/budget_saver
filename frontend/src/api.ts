@@ -122,6 +122,52 @@ export const api = {
       grand_total: number;
     }>(`/trends?months=${months}`),
 
+  listAnomalies: (month?: string) =>
+    request<{
+      month: string;
+      anomalies: {
+        id: string;
+        merchant: string;
+        amount: number;
+        average: number;
+        ratio: number;
+        category: string;
+        date: string;
+        message: string;
+      }[];
+      count: number;
+    }>(`/anomalies${month ? `?month=${month}` : ''}`),
+
+  exportCsvUrl: (month?: string) => {
+    const base = process.env.EXPO_PUBLIC_BACKEND_URL || '';
+    return `${base}/api/export/csv${month ? `?month=${month}` : ''}`;
+  },
+
+  listGoals: () => request<{ goals: any[] }>('/goals'),
+
+  createGoal: (body: { name: string; target_amount: number; target_date?: string }) =>
+    request('/goals', { method: 'POST', body: JSON.stringify(body) }),
+
+  contributeGoal: (id: string, amount: number) =>
+    request(`/goals/${id}/contribute`, {
+      method: 'POST',
+      body: JSON.stringify({ amount }),
+    }),
+
+  deleteGoal: (id: string) =>
+    request(`/goals/${id}`, { method: 'DELETE' }),
+
+  safeToSpend: (month?: string) =>
+    request<{
+      month: string;
+      spent: number;
+      budget: number;
+      remaining_budget: number;
+      days_remaining: number;
+      safe_per_day: number;
+      has_budget: boolean;
+    }>(`/safe-to-spend${month ? `?month=${month}` : ''}`),
+
   scanScreenshot: (image_base64: string, mime_type = 'image/jpeg') =>
     request<{
       amount: number | null;

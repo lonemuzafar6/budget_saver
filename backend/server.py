@@ -1,16 +1,20 @@
 from fastapi import FastAPI, APIRouter, HTTPException
+from fastapi.responses import PlainTextResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import re
+import csv
+import io
 import json
 import logging
 import uuid
+from calendar import monthrange
 from pathlib import Path
 from pydantic import BaseModel, Field
 from typing import List, Optional
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date as date_cls
 
 from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
 
@@ -162,6 +166,7 @@ async def create_expense(body: ExpenseCreate):
         source=body.source or "manual",
     )
     await db.expenses.insert_one(expense.model_dump())
+    await _record_merchant_memory(expense.merchant, expense.category)
     return expense
 
 
@@ -340,6 +345,54 @@ async def _get_total_budget(month: str) -> Optional[dict]:
     if doc and isinstance(doc.get("created_at"), datetime):
         doc["created_at"] = doc["created_at"].isoformat()
     return doc
+
+
+# ----- Merchant Memory -----
+def _normalize_merchant(name: str) -> str:
+    return re.sub(r"\s+", " ", (name or "").strip().lower())
+
+
+async def _record_merchant_memory(merchant: str, category: str) -> None:
+    if not merchant or category not in CATEGORIES:
+        return
+    norm = _normalize_merchant(merchant)
+    if not norm or norm == "unknown":
+        return
+    # Per-merchant per-category counter
+    await db.merchant_memory.update_one(
+        {"merchant_norm": norm, "category": category},
+        {
+            "$inc": {"count": 1},
+            "$set": {
+                "merchant_display": merchant.strip(),
+                "merchant_norm": norm,
+                "category": category,
+                "last_seen": datetime.now(timezone.utc),
+            },
+        },
+        upsert=True,
+    )
+
+
+async def _suggest_category_from_memory(merchant: str) -> Optional[str]:
+    norm = _normalize_merchant(merchant)
+    if not norm or norm == "unknown":
+        return None
+    cursor = db.merchant_memory.find({"merchant_norm": norm}, {"_id": 0}).sort(
+        "count", -1
+    )
+    rows = await cursor.to_list(8)
+    if not rows:
+        return None
+    # If top is overwhelmingly the most-used, return it.
+    top = rows[0]
+    total = sum(r.get("count", 0) for r in rows)
+    if top.get("count", 0) >= 2 and top.get("count", 0) / max(total, 1) >= 0.5:
+        return top.get("category")
+    # Otherwise if only one category ever seen, return it
+    if len(rows) == 1:
+        return top.get("category")
+    return None
 
 
 @api_router.get("/settings/total-budget")
@@ -698,6 +751,12 @@ async def scan_screenshot(body: ScanRequest):
         if category not in CATEGORIES:
             category = "Other"
 
+        # Override with merchant memory if we've seen this merchant before
+        if merchant:
+            memory_cat = await _suggest_category_from_memory(merchant)
+            if memory_cat:
+                category = memory_cat
+
         return ScanResponse(
             amount=amount,
             merchant=merchant,
@@ -709,6 +768,210 @@ async def scan_screenshot(body: ScanRequest):
     except Exception as exc:
         logging.exception("scan-screenshot failed")
         return ScanResponse(success=False, error=str(exc), category="Other")
+
+
+# ---------- Merchant Memory endpoints ----------
+@api_router.get("/merchants/suggest")
+async def merchant_suggest(merchant: str):
+    cat = await _suggest_category_from_memory(merchant)
+    return {"merchant": merchant, "suggested_category": cat}
+
+
+@api_router.get("/merchants")
+async def list_merchants():
+    cursor = db.merchant_memory.find({}, {"_id": 0}).sort("count", -1)
+    rows = await cursor.to_list(200)
+    for r in rows:
+        if isinstance(r.get("last_seen"), datetime):
+            r["last_seen"] = r["last_seen"].isoformat()
+    return {"merchants": rows}
+
+
+# ---------- Anomaly Detection ----------
+@api_router.get("/anomalies")
+async def get_anomalies(month: Optional[str] = None, factor: float = 2.0):
+    target_month = month or _current_month()
+    factor = max(1.5, min(5.0, float(factor)))
+
+    # Look at previous 3 months as history baseline
+    history_months = [_prev_month_str(target_month, i) for i in range(1, 4)]
+    hist_cursor = db.expenses.find(
+        {"date": {"$regex": "^(" + "|".join(history_months) + ")"}}, {"_id": 0}
+    )
+    history = await hist_cursor.to_list(10000)
+
+    # Aggregate per-merchant average from history
+    by_merchant_hist: dict = {}
+    for it in history:
+        m = _normalize_merchant(it.get("merchant", ""))
+        if not m:
+            continue
+        by_merchant_hist.setdefault(m, []).append(float(it.get("amount", 0)))
+
+    merchant_avg: dict = {}
+    for m, arr in by_merchant_hist.items():
+        if len(arr) >= 2:
+            merchant_avg[m] = sum(arr) / len(arr)
+
+    # This month's expenses
+    cur_cursor = db.expenses.find({"date": {"$regex": f"^{target_month}"}}, {"_id": 0})
+    current = await cur_cursor.to_list(5000)
+
+    anomalies = []
+    for it in current:
+        m = _normalize_merchant(it.get("merchant", ""))
+        amt = float(it.get("amount", 0))
+        avg = merchant_avg.get(m)
+        if avg and avg > 0 and amt >= avg * factor:
+            anomalies.append(
+                {
+                    "id": it.get("id"),
+                    "merchant": it.get("merchant"),
+                    "amount": round(amt, 2),
+                    "average": round(avg, 2),
+                    "ratio": round(amt / avg, 2),
+                    "category": it.get("category"),
+                    "date": it.get("date"),
+                    "message": f"\u20B9{int(amt)} is {round(amt / avg, 1)}\u00d7 your usual at {it.get('merchant')} (~\u20B9{int(avg)}).",
+                }
+            )
+
+    anomalies.sort(key=lambda a: -a["ratio"])
+    return {"month": target_month, "anomalies": anomalies, "count": len(anomalies)}
+
+
+# ---------- CSV Export ----------
+@api_router.get("/export/csv", response_class=PlainTextResponse)
+async def export_csv(month: Optional[str] = None):
+    target_month = month or _current_month()
+    cursor = db.expenses.find(
+        {"date": {"$regex": f"^{target_month}"}}, {"_id": 0}
+    ).sort("date", 1)
+    rows = await cursor.to_list(10000)
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["Date", "Merchant", "Category", "Amount (INR)", "Source", "Note"])
+    for r in rows:
+        writer.writerow(
+            [
+                r.get("date", ""),
+                r.get("merchant", ""),
+                r.get("category", ""),
+                f"{float(r.get('amount', 0)):.2f}",
+                r.get("source", ""),
+                r.get("note", ""),
+            ]
+        )
+
+    headers = {
+        "Content-Disposition": f'attachment; filename="budgetsnavings-{target_month}.csv"',
+        "Content-Type": "text/csv; charset=utf-8",
+    }
+    return PlainTextResponse(content=buf.getvalue(), headers=headers, media_type="text/csv")
+
+
+# ---------- Savings Goals ----------
+class GoalCreate(BaseModel):
+    name: str
+    target_amount: float
+    target_date: Optional[str] = None  # YYYY-MM-DD
+
+
+class GoalContribute(BaseModel):
+    amount: float
+
+
+@api_router.post("/goals")
+async def create_goal(body: GoalCreate):
+    goal = {
+        "id": str(uuid.uuid4()),
+        "name": body.name.strip() or "Untitled goal",
+        "target_amount": float(body.target_amount),
+        "target_date": body.target_date,
+        "contributed": 0.0,
+        "created_at": datetime.now(timezone.utc),
+    }
+    await db.goals.insert_one(goal)
+    goal.pop("_id", None)
+    goal["created_at"] = goal["created_at"].isoformat()
+    return goal
+
+
+@api_router.get("/goals")
+async def list_goals():
+    cursor = db.goals.find({}, {"_id": 0}).sort("created_at", -1)
+    rows = await cursor.to_list(200)
+    for r in rows:
+        if isinstance(r.get("created_at"), datetime):
+            r["created_at"] = r["created_at"].isoformat()
+        t = float(r.get("target_amount", 0))
+        c = float(r.get("contributed", 0))
+        r["progress_percent"] = round((c / t * 100) if t > 0 else 0, 1)
+        r["remaining"] = round(max(t - c, 0), 2)
+    return {"goals": rows}
+
+
+@api_router.post("/goals/{goal_id}/contribute")
+async def contribute_goal(goal_id: str, body: GoalContribute):
+    amt = float(body.amount)
+    if amt <= 0:
+        raise HTTPException(status_code=400, detail="Amount must be positive")
+    res = await db.goals.update_one(
+        {"id": goal_id}, {"$inc": {"contributed": amt}}
+    )
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Goal not found")
+    doc = await db.goals.find_one({"id": goal_id}, {"_id": 0})
+    if isinstance(doc.get("created_at"), datetime):
+        doc["created_at"] = doc["created_at"].isoformat()
+    return doc
+
+
+@api_router.delete("/goals/{goal_id}")
+async def delete_goal(goal_id: str):
+    res = await db.goals.delete_one({"id": goal_id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Goal not found")
+    return {"success": True}
+
+
+# ---------- Safe to spend today ----------
+@api_router.get("/safe-to-spend")
+async def safe_to_spend(month: Optional[str] = None):
+    target_month = month or _current_month()
+    # Sum this month's spend
+    ecursor = db.expenses.find({"date": {"$regex": f"^{target_month}"}}, {"_id": 0})
+    expenses = await ecursor.to_list(5000)
+    spent = sum(float(e.get("amount", 0)) for e in expenses)
+
+    total_budget = await _get_total_budget(target_month)
+    budget_amount = float(total_budget["amount"]) if total_budget else 0
+
+    # Days remaining in target month (today's date if same month, else last day)
+    today = datetime.now(timezone.utc).date()
+    y, m = map(int, target_month.split("-"))
+    last_day = monthrange(y, m)[1]
+    if today.year == y and today.month == m:
+        day_in_month = today.day
+    elif (today.year, today.month) > (y, m):
+        day_in_month = last_day
+    else:
+        day_in_month = 1
+    days_remaining = max(1, last_day - day_in_month + 1)
+
+    remaining_budget = max(budget_amount - spent, 0) if budget_amount > 0 else 0
+    safe_per_day = remaining_budget / days_remaining if budget_amount > 0 else 0
+
+    return {
+        "month": target_month,
+        "spent": round(spent, 2),
+        "budget": round(budget_amount, 2),
+        "remaining_budget": round(remaining_budget, 2),
+        "days_remaining": days_remaining,
+        "safe_per_day": round(safe_per_day, 2),
+        "has_budget": budget_amount > 0,
+    }
 
 
 # ---------- Wire up ----------

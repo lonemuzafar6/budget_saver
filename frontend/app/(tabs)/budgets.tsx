@@ -168,8 +168,15 @@ export default function BudgetsScreen() {
           <Text style={styles.subtitle}>{monthLabel(currentMonth())}</Text>
         </View>
         <Pressable
-          testID="budgets-suggest-btn"
+          testID="budgets-goals-btn"
           style={styles.headerBtn}
+          onPress={() => router.push('/goals')}
+        >
+          <Ionicons name="flag-outline" size={18} color={COLORS.brand} />
+        </Pressable>
+        <Pressable
+          testID="budgets-suggest-btn"
+          style={[styles.headerBtn, { marginLeft: 8 }]}
           onPress={() => router.push('/budget-suggestions')}
         >
           <Ionicons name="sparkles-outline" size={18} color={COLORS.brand} />

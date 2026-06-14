@@ -43,11 +43,13 @@ export default function HomeScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [data, setData] = useState<any>(null);
+  const [safe, setSafe] = useState<any>(null);
 
   const load = useCallback(async () => {
     try {
-      const res = await api.dashboard();
+      const [res, safe] = await Promise.all([api.dashboard(), api.safeToSpend()]);
       setData(res);
+      setSafe(safe);
     } catch (e) {
       console.warn('dashboard load', e);
     } finally {
@@ -181,6 +183,18 @@ export default function HomeScreen() {
                       { width: `${totalPct}%`, backgroundColor: totalBarColor },
                     ]}
                   />
+                </View>
+              )}
+              {safe?.has_budget && safe?.safe_per_day > 0 && (
+                <View style={styles.safeRow} testID="safe-to-spend">
+                  <Ionicons name="shield-checkmark" size={14} color={COLORS.success} />
+                  <Text style={styles.safeText}>
+                    Safe to spend today:{' '}
+                    <Text style={{ fontWeight: '800' }}>
+                      {formatCurrency(safe.safe_per_day)}
+                    </Text>
+                    {'  '}({safe.days_remaining} days left)
+                  </Text>
                 </View>
               )}
             </LinearGradient>
@@ -354,6 +368,18 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   heroBarFill: { height: '100%', borderRadius: 4 },
+  safeRow: {
+    marginTop: SPACING.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(52,199,89,0.10)',
+    paddingHorizontal: SPACING.sm,
+    paddingVertical: 6,
+    borderRadius: RADIUS.sm,
+    alignSelf: 'flex-start',
+  },
+  safeText: { color: COLORS.brand, fontSize: 12, fontWeight: '600' },
   card: {
     marginTop: SPACING.lg,
     marginHorizontal: SPACING.lg,

@@ -29,11 +29,13 @@ export default function AlertsScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [alerts, setAlerts] = useState<any[]>([]);
+  const [anomalies, setAnomalies] = useState<any[]>([]);
 
   const load = useCallback(async () => {
     try {
-      const res = await api.listAlerts();
-      setAlerts(res.alerts || []);
+      const [a, an] = await Promise.all([api.listAlerts(), api.listAnomalies()]);
+      setAlerts(a.alerts || []);
+      setAnomalies(an.anomalies || []);
     } catch (e) {
       console.warn('alerts', e);
     } finally {
@@ -77,7 +79,7 @@ export default function AlertsScreen() {
             />
           }
         >
-          {alerts.length === 0 ? (
+          {alerts.length === 0 && anomalies.length === 0 ? (
             <View style={styles.empty}>
               <View style={styles.emptyIconWrap}>
                 <Ionicons name="checkmark-circle" size={42} color={COLORS.success} />
@@ -95,7 +97,49 @@ export default function AlertsScreen() {
               </Pressable>
             </View>
           ) : (
-            alerts.map((a) => {
+            <>
+              {anomalies.length > 0 && (
+                <>
+                  <Text style={styles.sectionLabel}>Unusual spending</Text>
+                  {anomalies.map((a) => (
+                    <View
+                      key={`anomaly-${a.id}`}
+                      testID={`anomaly-${a.id}`}
+                      style={[styles.alertCard, { borderColor: COLORS.warning }]}
+                    >
+                      <View style={styles.alertHead}>
+                        <View style={[styles.alertIcon, { backgroundColor: '#FFF1DA' }]}>
+                          <Ionicons name="trending-up" size={20} color={COLORS.warning} />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.alertTitle}>{a.merchant}</Text>
+                          <Text style={styles.alertMessage}>{a.message}</Text>
+                        </View>
+                        <View style={[styles.severityPill, { backgroundColor: '#FFF1DA' }]}>
+                          <Text style={[styles.severityText, { color: COLORS.warning }]}>
+                            {a.ratio}×
+                          </Text>
+                        </View>
+                      </View>
+                      <View style={styles.alertFoot}>
+                        <Text style={styles.footMeta}>
+                          {a.category} • {a.date}
+                        </Text>
+                        <Text style={[styles.footPct, { color: COLORS.warning }]}>
+                          {formatCurrency(a.amount)}
+                        </Text>
+                      </View>
+                    </View>
+                  ))}
+                </>
+              )}
+
+              {alerts.length > 0 && anomalies.length > 0 && (
+                <Text style={[styles.sectionLabel, { marginTop: SPACING.lg }]}>
+                  Budget alerts
+                </Text>
+              )}
+              {alerts.map((a) => {
               const isOver = a.severity === 'over';
               const meta = a.category
                 ? CATEGORY_META[a.category as CategoryName] || CATEGORY_META.Other
@@ -152,7 +196,8 @@ export default function AlertsScreen() {
                   </View>
                 </View>
               );
-            })
+            })}
+            </>
           )}
         </ScrollView>
       )}
@@ -251,4 +296,12 @@ const styles = StyleSheet.create({
   },
   footMeta: { color: COLORS.muted, fontSize: 12, fontWeight: '600' },
   footPct: { fontSize: 14, fontWeight: '800' },
+  sectionLabel: {
+    color: COLORS.muted,
+    fontSize: 11,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: SPACING.sm,
+  },
 });
