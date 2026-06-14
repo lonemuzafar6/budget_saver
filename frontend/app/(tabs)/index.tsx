@@ -94,7 +94,7 @@ export default function HomeScreen() {
       <View style={styles.header}>
         <View>
           <Text style={styles.headerTitle}>BudgetSnavings</Text>
-          <Text style={styles.headerSub}>{monthLabel(currentMonth())}</Text>
+          <Text style={styles.headerSub}>Snap. Spend. Save. • {monthLabel(currentMonth())}</Text>
         </View>
         <View style={styles.headerActions}>
           <Pressable
