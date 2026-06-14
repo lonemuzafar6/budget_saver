@@ -1,0 +1,39 @@
+{
+  "summary": "Iteration 2 (BUDGETS + ALERTS) tested end-to-end. Backend: 33/33 pytest passing — 14 NEW tests in /app/backend/tests/test_alerts_budgets.py cover total-budget upsert/get/delete + threshold clamping (50..100), per-category alert_threshold (default 80, custom 70, clamped), GET /api/alerts (no-alerts, total over, category warning, category over with proper severity ordering), and GET /api/dashboard now returning total_budget+alerts+alert_count with alert_threshold on each budget. Regression of all iteration-1 endpoints still 19/19 (skipping the slow LLM scan_real test in this rerun; it passed in iter 1). Frontend (mobile 390x844): seeded total budget ₹500/60% + Food ₹100/50% + spend ₹984. Home shows red 'Overall budget exceeded' banner with '+1 more' and bell badge '2' — tapping banner deeplinks to /alerts which lists both alerts with correct severity pills (red 'Over' / orange '50%'), correct ₹spent of ₹limit, and percent (197%, 60%). Budgets screen shows the Total monthly budget card with edit pencil; editing to ₹800 + threshold 70 saves and the subtitle updates to '₹800 • Alert at 70%'. Each category card shows 'Alert {X}%' subtitle and threshold pickers (50..100) — changed Food threshold 50 → 90 successfully (subtitle updated to 'Alert 90%' and progress bar color logic flips correctly between warning/normal based on saved threshold). budgets-alerts-btn header bell present. No red screens, no API errors. All testIDs from review_request found: home-alerts-btn, home-alert-banner, alerts-screen, alert-*, alerts-back, total-budget-card, edit-total-budget, save-total-budget, total-budget-input, total-threshold-{50..100}, budgets-alerts-btn, threshold-Food-{50..100}, edit-budget-Food.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_alerts_budgets.py",
+    "/app/backend/tests/test_backend.py",
+    "/app/test_reports/pytest/pytest_alerts.xml"
+  ],
+  "action_items": [
+    "Pre-existing (carried from iter_1, still not addressed): remove the extraneous Stack.Screen name=\"budget-edit\" entry in /app/frontend/app/_layout.tsx (no matching route file).",
+    "Pre-existing (carried from iter_1): migrate shadow* style props to boxShadow and pointerEvents prop to style.pointerEvents to silence RN-web deprecations.",
+    "Minor polish (optional): also expose remove-total-budget testID in the collapsed (non-editing) total-budget card — currently the trash only appears in edit mode, which works but the review_request implied it as a top-level testID. Not a bug; behavior is fine."
+  ],
+  "critical_code_review_comments": [
+    "Alert computation in server._compute_alerts is clean: handles zero/negative limits safely, sorts over → warning → percent desc, includes scope/category/threshold so the UI can color-code correctly.",
+    "alert_threshold is properly clamped on both /api/budgets and /api/settings/total-budget (50..100); list_budgets backfills alert_threshold=80 for older budgets via setdefault — good backward compat.",
+    "Total budget persisted in db.settings with type='total_budget' + month; idempotent upsert by (type, month). _id excluded via projection. No ObjectId leaks anywhere.",
+    "Frontend api.ts now exposes getTotalBudget / upsertTotalBudget / deleteTotalBudget / listAlerts and the dashboard() return type was extended with total_budget + alerts + alert_count — types match backend exactly.",
+    "Per-category threshold is reflected both in cardSub text ('Alert {X}%') and used by progress bar color (verified live: Food bar turned green at 60%/90%-threshold and would have been warning at 60%/50%-threshold)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_alerts_budgets.py (new)"
+  ],
+  "success_rate": {"backend": "100% (33/33)", "frontend": "100% (all flows verified)"},
+  "seed_data_creation": "Tests create and delete TEST_-prefixed expenses, category budgets, and total budget within each class. UI test seeded total ₹500/60%, Food ₹100/50%, +2 expenses — all cleaned up after the run via API.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Iter 2 added BUDGETS+ALERTS. New endpoints: GET/POST/DELETE /api/settings/total-budget; GET /api/alerts; alert_threshold (50..100, default 80) on /api/budgets; dashboard now returns total_budget + alerts + alert_count. New routes/UI: /alerts screen (testIDs alerts-screen, alert-*, alerts-back, alerts-go-budgets); Home alert banner + bell (home-alert-banner, home-alerts-btn); Budgets total-budget-card with edit-total-budget/total-budget-input/total-threshold-{50..100}/save-total-budget/remove-total-budget and per-category threshold-{Cat}-{50..100} and budgets-alerts-btn. All passing as of 2026-06-14. Use /app/backend/tests/test_alerts_budgets.py + test_backend.py for regression. EXPO_PUBLIC_BACKEND_URL = https://smart-receipt-parser-2.preview.emergentagent.com.",
+  "rca_of_issue": "N/A — no functional bugs in iteration 2."
+}

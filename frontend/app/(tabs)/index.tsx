@@ -75,6 +75,20 @@ export default function HomeScreen() {
         CATEGORY_META[c.category as CategoryName]?.color || PIE_COLORS[i % PIE_COLORS.length],
     })) || [];
 
+  const totalBudget = data?.total_budget;
+  const totalBudgetAmount = totalBudget ? Number(totalBudget.amount) : 0;
+  const totalSpent = Number(data?.total || 0);
+  const totalPct =
+    totalBudgetAmount > 0 ? Math.min((totalSpent / totalBudgetAmount) * 100, 100) : 0;
+  const totalRatio = totalBudgetAmount > 0 ? totalSpent / totalBudgetAmount : 0;
+  let totalBarColor = COLORS.brandPrimary;
+  if (totalRatio >= 1) totalBarColor = COLORS.error;
+  else if (totalRatio >= 0.8) totalBarColor = COLORS.warning;
+
+  const alerts: any[] = data?.alerts || [];
+  const alertCount: number = data?.alert_count || 0;
+  const topAlert = alerts[0];
+
   return (
     <SafeAreaView edges={['top']} style={styles.container} testID="home-screen">
       <View style={styles.header}>
@@ -82,13 +96,27 @@ export default function HomeScreen() {
           <Text style={styles.headerTitle}>Dashboard</Text>
           <Text style={styles.headerSub}>{monthLabel(currentMonth())}</Text>
         </View>
-        <Pressable
-          testID="home-add-icon"
-          style={styles.headerBtn}
-          onPress={() => router.push('/add')}
-        >
-          <Ionicons name="add" size={22} color={COLORS.brand} />
-        </Pressable>
+        <View style={styles.headerActions}>
+          <Pressable
+            testID="home-alerts-btn"
+            style={styles.headerBtn}
+            onPress={() => router.push('/alerts')}
+          >
+            <Ionicons name="notifications-outline" size={20} color={COLORS.brand} />
+            {alertCount > 0 && (
+              <View style={styles.badge}>
+                <Text style={styles.badgeText}>{alertCount}</Text>
+              </View>
+            )}
+          </Pressable>
+          <Pressable
+            testID="home-add-icon"
+            style={styles.headerBtn}
+            onPress={() => router.push('/add')}
+          >
+            <Ionicons name="add" size={22} color={COLORS.brand} />
+          </Pressable>
+        </View>
       </View>
 
       <ScrollView
@@ -102,6 +130,33 @@ export default function HomeScreen() {
           </View>
         ) : (
           <>
+            {topAlert && (
+              <Pressable
+                testID="home-alert-banner"
+                style={[
+                  styles.alertBanner,
+                  topAlert.severity === 'over'
+                    ? styles.alertBannerOver
+                    : styles.alertBannerWarn,
+                ]}
+                onPress={() => router.push('/alerts')}
+              >
+                <Ionicons
+                  name={topAlert.severity === 'over' ? 'alert-circle' : 'warning'}
+                  size={20}
+                  color={topAlert.severity === 'over' ? COLORS.error : COLORS.warning}
+                />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.alertTitle}>{topAlert.title}</Text>
+                  <Text style={styles.alertMessage} numberOfLines={1}>
+                    {topAlert.message}
+                    {alertCount > 1 ? `  •  +${alertCount - 1} more` : ''}
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color={COLORS.muted} />
+              </Pressable>
+            )}
+
             <LinearGradient
               colors={[COLORS.brandTertiary, COLORS.surfaceSecondary]}
               start={{ x: 0, y: 0 }}
@@ -110,11 +165,24 @@ export default function HomeScreen() {
             >
               <Text style={styles.heroLabel}>Total spent this month</Text>
               <Text style={styles.heroAmount} testID="dashboard-total">
-                {formatCurrency(data?.total || 0)}
+                {formatCurrency(totalSpent)}
               </Text>
               <Text style={styles.heroMeta}>
                 {data?.count || 0} {data?.count === 1 ? 'transaction' : 'transactions'}
+                {totalBudgetAmount > 0
+                  ? `  •  of ${formatCurrency(totalBudgetAmount)} budget`
+                  : ''}
               </Text>
+              {totalBudgetAmount > 0 && (
+                <View style={styles.heroBarBg}>
+                  <View
+                    style={[
+                      styles.heroBarFill,
+                      { width: `${totalPct}%`, backgroundColor: totalBarColor },
+                    ]}
+                  />
+                </View>
+              )}
             </LinearGradient>
 
             <View style={styles.card}>
@@ -142,7 +210,7 @@ export default function HomeScreen() {
                     centerLabelComponent={() => (
                       <View style={{ alignItems: 'center' }}>
                         <Text style={styles.donutCenterAmt}>
-                          {formatCurrency(data?.total || 0)}
+                          {formatCurrency(totalSpent)}
                         </Text>
                         <Text style={styles.donutCenterLabel}>Total</Text>
                       </View>
@@ -222,6 +290,7 @@ const styles = StyleSheet.create({
   },
   headerTitle: { fontSize: 28, fontWeight: '800', color: COLORS.onSurface },
   headerSub: { fontSize: 13, color: COLORS.muted, marginTop: 2 },
+  headerActions: { flexDirection: 'row', gap: 8 },
   headerBtn: {
     width: 40,
     height: 40,
@@ -230,7 +299,36 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  badge: {
+    position: 'absolute',
+    top: -2,
+    right: -2,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: COLORS.error,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 4,
+    borderWidth: 2,
+    borderColor: COLORS.surface,
+  },
+  badgeText: { color: '#fff', fontSize: 10, fontWeight: '800' },
   loadingBox: { paddingVertical: 80, alignItems: 'center' },
+  alertBanner: {
+    marginHorizontal: SPACING.lg,
+    marginTop: SPACING.sm,
+    padding: SPACING.md,
+    borderRadius: RADIUS.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.md,
+    borderWidth: 1,
+  },
+  alertBannerOver: { backgroundColor: '#FBDEDD', borderColor: COLORS.error },
+  alertBannerWarn: { backgroundColor: '#FFF1DA', borderColor: COLORS.warning },
+  alertTitle: { fontSize: 13, fontWeight: '700', color: COLORS.onSurface },
+  alertMessage: { fontSize: 12, color: COLORS.muted, marginTop: 2 },
   hero: {
     marginHorizontal: SPACING.lg,
     marginTop: SPACING.sm,
@@ -248,6 +346,14 @@ const styles = StyleSheet.create({
     letterSpacing: -0.5,
   },
   heroMeta: { color: COLORS.muted, fontSize: 12, marginTop: 4 },
+  heroBarBg: {
+    marginTop: SPACING.md,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: 'rgba(255,255,255,0.6)',
+    overflow: 'hidden',
+  },
+  heroBarFill: { height: '100%', borderRadius: 4 },
   card: {
     marginTop: SPACING.lg,
     marginHorizontal: SPACING.lg,

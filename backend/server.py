@@ -75,6 +75,7 @@ class Budget(BaseModel):
     category: str
     amount: float
     month: str  # YYYY-MM
+    alert_threshold: int = 80  # 50..100
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -82,6 +83,13 @@ class BudgetCreate(BaseModel):
     category: str
     amount: float
     month: Optional[str] = None
+    alert_threshold: Optional[int] = 80
+
+
+class TotalBudgetUpsert(BaseModel):
+    amount: float
+    month: Optional[str] = None
+    alert_threshold: Optional[int] = 80
 
 
 class ScanRequest(BaseModel):
@@ -232,6 +240,9 @@ async def dashboard(month: Optional[str] = None):
         if isinstance(b.get("created_at"), datetime):
             b["created_at"] = b["created_at"].isoformat()
 
+    total_budget = await _get_total_budget(target_month)
+    alerts = _compute_alerts(total, total_budget, budgets, by_category)
+
     return {
         "month": target_month,
         "total": round(total, 2),
@@ -239,6 +250,9 @@ async def dashboard(month: Optional[str] = None):
         "by_category": breakdown,
         "recent": recent,
         "budgets": budgets,
+        "total_budget": total_budget,
+        "alerts": alerts,
+        "alert_count": len(alerts),
     }
 
 
@@ -247,19 +261,27 @@ async def dashboard(month: Optional[str] = None):
 async def upsert_budget(body: BudgetCreate):
     month = body.month or _current_month()
     category = body.category if body.category in CATEGORIES else "Other"
+    threshold = max(50, min(100, int(body.alert_threshold or 80)))
     existing = await db.budgets.find_one({"category": category, "month": month})
     if existing:
         await db.budgets.update_one(
             {"category": category, "month": month},
-            {"$set": {"amount": float(body.amount)}},
+            {"$set": {"amount": float(body.amount), "alert_threshold": threshold}},
         )
         doc = await db.budgets.find_one({"category": category, "month": month}, {"_id": 0})
     else:
-        budget = Budget(category=category, amount=float(body.amount), month=month)
+        budget = Budget(
+            category=category,
+            amount=float(body.amount),
+            month=month,
+            alert_threshold=threshold,
+        )
         await db.budgets.insert_one(budget.model_dump())
         doc = budget.model_dump()
     if isinstance(doc.get("created_at"), datetime):
         doc["created_at"] = doc["created_at"].isoformat()
+    # Ensure alert_threshold exists on older records too
+    doc.setdefault("alert_threshold", 80)
     return doc
 
 
@@ -278,10 +300,15 @@ async def list_budgets(month: Optional[str] = None):
 
     for b in budgets:
         b["spent"] = round(spent_by_cat.get(b["category"], 0.0), 2)
+        b.setdefault("alert_threshold", 80)
         if isinstance(b.get("created_at"), datetime):
             b["created_at"] = b["created_at"].isoformat()
 
-    return {"month": target_month, "budgets": budgets}
+    return {
+        "month": target_month,
+        "budgets": budgets,
+        "total_budget": await _get_total_budget(target_month),
+    }
 
 
 @api_router.delete("/budgets/{budget_id}")
@@ -290,6 +317,168 @@ async def delete_budget(budget_id: str):
     if res.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Budget not found")
     return {"success": True}
+
+
+# ----- Total Budget (per month) -----
+async def _get_total_budget(month: str) -> Optional[dict]:
+    doc = await db.settings.find_one(
+        {"type": "total_budget", "month": month}, {"_id": 0}
+    )
+    if doc and isinstance(doc.get("created_at"), datetime):
+        doc["created_at"] = doc["created_at"].isoformat()
+    return doc
+
+
+@api_router.get("/settings/total-budget")
+async def get_total_budget(month: Optional[str] = None):
+    target_month = month or _current_month()
+    doc = await _get_total_budget(target_month)
+    return {"month": target_month, "total_budget": doc}
+
+
+@api_router.post("/settings/total-budget")
+async def upsert_total_budget(body: TotalBudgetUpsert):
+    month = body.month or _current_month()
+    threshold = max(50, min(100, int(body.alert_threshold or 80)))
+    amount = float(body.amount)
+    existing = await db.settings.find_one({"type": "total_budget", "month": month})
+    if existing:
+        await db.settings.update_one(
+            {"type": "total_budget", "month": month},
+            {"$set": {"amount": amount, "alert_threshold": threshold}},
+        )
+    else:
+        await db.settings.insert_one(
+            {
+                "id": str(uuid.uuid4()),
+                "type": "total_budget",
+                "month": month,
+                "amount": amount,
+                "alert_threshold": threshold,
+                "created_at": datetime.now(timezone.utc),
+            }
+        )
+    return await _get_total_budget(month)
+
+
+@api_router.delete("/settings/total-budget")
+async def delete_total_budget(month: Optional[str] = None):
+    target_month = month or _current_month()
+    await db.settings.delete_one({"type": "total_budget", "month": target_month})
+    return {"success": True}
+
+
+# ----- Alerts -----
+def _compute_alerts(
+    total: float,
+    total_budget: Optional[dict],
+    budgets: List[dict],
+    by_category: dict,
+) -> List[dict]:
+    alerts: List[dict] = []
+
+    # Overall alert
+    if total_budget and float(total_budget.get("amount", 0)) > 0:
+        limit = float(total_budget["amount"])
+        threshold = int(total_budget.get("alert_threshold", 80))
+        pct = (total / limit) * 100 if limit > 0 else 0
+        if pct >= 100:
+            alerts.append(
+                {
+                    "id": f"total-{total_budget.get('month')}",
+                    "scope": "total",
+                    "category": None,
+                    "severity": "over",
+                    "spent": round(total, 2),
+                    "limit": round(limit, 2),
+                    "percent": round(pct, 1),
+                    "threshold": threshold,
+                    "title": "Overall budget exceeded",
+                    "message": f"You've spent \u20B9{int(total)} of your \u20B9{int(limit)} total monthly budget.",
+                }
+            )
+        elif pct >= threshold:
+            alerts.append(
+                {
+                    "id": f"total-{total_budget.get('month')}",
+                    "scope": "total",
+                    "category": None,
+                    "severity": "warning",
+                    "spent": round(total, 2),
+                    "limit": round(limit, 2),
+                    "percent": round(pct, 1),
+                    "threshold": threshold,
+                    "title": "Approaching total budget",
+                    "message": f"You've used {int(pct)}% of your \u20B9{int(limit)} total budget.",
+                }
+            )
+
+    # Category alerts
+    for b in budgets:
+        limit = float(b.get("amount", 0))
+        if limit <= 0:
+            continue
+        cat = b.get("category", "Other")
+        spent = float(by_category.get(cat, 0))
+        threshold = int(b.get("alert_threshold", 80))
+        pct = (spent / limit) * 100 if limit > 0 else 0
+        if pct >= 100:
+            alerts.append(
+                {
+                    "id": f"cat-{cat}-{b.get('month')}",
+                    "scope": "category",
+                    "category": cat,
+                    "severity": "over",
+                    "spent": round(spent, 2),
+                    "limit": round(limit, 2),
+                    "percent": round(pct, 1),
+                    "threshold": threshold,
+                    "title": f"{cat} budget exceeded",
+                    "message": f"\u20B9{int(spent)} spent vs \u20B9{int(limit)} budgeted.",
+                }
+            )
+        elif pct >= threshold:
+            alerts.append(
+                {
+                    "id": f"cat-{cat}-{b.get('month')}",
+                    "scope": "category",
+                    "category": cat,
+                    "severity": "warning",
+                    "spent": round(spent, 2),
+                    "limit": round(limit, 2),
+                    "percent": round(pct, 1),
+                    "threshold": threshold,
+                    "title": f"{cat} nearing budget",
+                    "message": f"{int(pct)}% used (\u20B9{int(spent)} of \u20B9{int(limit)}).",
+                }
+            )
+
+    # Sort: over first, then warning, then by percent desc
+    alerts.sort(
+        key=lambda a: (0 if a["severity"] == "over" else 1, -a["percent"])
+    )
+    return alerts
+
+
+@api_router.get("/alerts")
+async def get_alerts(month: Optional[str] = None):
+    target_month = month or _current_month()
+    ecursor = db.expenses.find({"date": {"$regex": f"^{target_month}"}}, {"_id": 0})
+    expenses = await ecursor.to_list(5000)
+    total = 0.0
+    by_category: dict = {}
+    for e in expenses:
+        amt = float(e.get("amount", 0))
+        total += amt
+        cat = e.get("category", "Other")
+        by_category[cat] = by_category.get(cat, 0.0) + amt
+
+    bcursor = db.budgets.find({"month": target_month}, {"_id": 0})
+    budgets = await bcursor.to_list(100)
+    total_budget = await _get_total_budget(target_month)
+
+    alerts = _compute_alerts(total, total_budget, budgets, by_category)
+    return {"month": target_month, "alerts": alerts, "count": len(alerts)}
 
 
 # ----- Scan Screenshot -----

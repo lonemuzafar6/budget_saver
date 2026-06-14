@@ -39,18 +39,51 @@ export const api = {
   getExpense: (id: string) => request(`/expenses/${id}`),
 
   dashboard: (month?: string) =>
-    request<{ total: number; count: number; by_category: any[]; recent: any[]; budgets: any[]; month: string }>(
-      `/dashboard${month ? `?month=${month}` : ''}`
-    ),
+    request<{
+      total: number;
+      count: number;
+      by_category: any[];
+      recent: any[];
+      budgets: any[];
+      month: string;
+      total_budget: { amount: number; alert_threshold: number; month: string } | null;
+      alerts: any[];
+      alert_count: number;
+    }>(`/dashboard${month ? `?month=${month}` : ''}`),
 
   listBudgets: (month?: string) =>
-    request<{ month: string; budgets: any[] }>(`/budgets${month ? `?month=${month}` : ''}`),
+    request<{
+      month: string;
+      budgets: any[];
+      total_budget: { amount: number; alert_threshold: number; month: string } | null;
+    }>(`/budgets${month ? `?month=${month}` : ''}`),
 
   upsertBudget: (body: Json) =>
     request('/budgets', { method: 'POST', body: JSON.stringify(body) }),
 
   deleteBudget: (id: string) =>
     request(`/budgets/${id}`, { method: 'DELETE' }),
+
+  getTotalBudget: (month?: string) =>
+    request<{ month: string; total_budget: any | null }>(
+      `/settings/total-budget${month ? `?month=${month}` : ''}`
+    ),
+
+  upsertTotalBudget: (amount: number, alert_threshold = 80, month?: string) =>
+    request('/settings/total-budget', {
+      method: 'POST',
+      body: JSON.stringify({ amount, alert_threshold, month }),
+    }),
+
+  deleteTotalBudget: (month?: string) =>
+    request(`/settings/total-budget${month ? `?month=${month}` : ''}`, {
+      method: 'DELETE',
+    }),
+
+  listAlerts: (month?: string) =>
+    request<{ month: string; alerts: any[]; count: number }>(
+      `/alerts${month ? `?month=${month}` : ''}`
+    ),
 
   scanScreenshot: (image_base64: string, mime_type = 'image/jpeg') =>
     request<{
