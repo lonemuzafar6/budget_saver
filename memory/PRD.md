@@ -22,6 +22,9 @@ A personal expense tracker for India that turns UPI payment screenshots (GPay, P
 - **Insights tab** → bar chart per category, top-5 with % share.
 - **Currency** INR (₹).
 - **No authentication** — single-user local app.
+- **Smart auto-budgets**: `/budget-suggestions` modal proposes per-category and total monthly budgets based on average of the last 3 months × 1.1 buffer, rounded to nearest ₹100. One-tap Apply writes selected budgets.
+- **Bulk screenshot import**: Add → "Bulk import" picks up to 10 screenshots, scans each via Claude Sonnet 4.5 vision sequentially, shows a review list with per-row edit (amount/merchant/category) + checkbox + remove, then bulk-saves selected rows.
+- **Multi-month trends in Insights**: Range chips (3M / 4M / 6M) drive an area-line chart of monthly totals; per-category section shows sparklines with month-over-month delta %.
 
 ## Architecture
 - **Frontend**: React Native (Expo SDK 54) + expo-router file-based routing, react-native-gifted-charts, react-native-gesture-handler (swipe), expo-image-picker, expo-blur (tab bar glassmorphism on iOS).
@@ -32,7 +35,9 @@ A personal expense tracker for India that turns UPI payment screenshots (GPay, P
 - `GET /api/categories`
 - `GET|POST|PATCH|DELETE /api/expenses[/{id}]` (filters: `?category=&month=&q=`)
 - `GET /api/dashboard?month=YYYY-MM`
-- `GET|POST|DELETE /api/settings/total-budget?month=YYYY-MM` — overall monthly budget + alert threshold
+- `GET /api/budget-suggestions?month=&lookback=` — suggested budget per category + total (avg × 1.1, rounded to ₹100)
+- `GET /api/trends?months=4&end_month=` — last N months totals + per-category series (sparkline values)
+- `GET|POST|DELETE /api/settings/total-budget?month=YYYY-MM`
 - `GET /api/alerts?month=YYYY-MM` — list of active alerts (overall + category, severity sorted)
 - `GET|POST /api/budgets`, `DELETE /api/budgets/{id}` — per-category budgets now accept `alert_threshold` (50-100)
 - `POST /api/scan-screenshot` { image_base64, mime_type } → { amount, merchant, date, category, success }

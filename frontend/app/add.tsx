@@ -374,7 +374,6 @@ export default function AddExpenseScreen() {
             </View>
 
             {bulkRows.map((row) => {
-              const meta = CATEGORY_META[row.category] || CATEGORY_META.Other;
               const isScanning = row.status === 'scanning';
               return (
                 <View key={row.key} style={styles.bulkCard} testID={`bulk-row-${row.key}`}>
