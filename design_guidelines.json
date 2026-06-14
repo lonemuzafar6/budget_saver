@@ -1,0 +1,152 @@
+{
+  "app_name": "SS Spend Tracker",
+  "personality": "1 iOS-Native Clean",
+  "personality_one_liner": "A modern, polished, and highly legible fintech app where the spending data is the hero, framed by crisp whites and premium sage greens.",
+  "color": {
+    "surface": "#F2F2F7",
+    "onSurface": "#1C1C1E",
+    "surfaceSecondary": "#FFFFFF",
+    "onSurfaceSecondary": "#1C1C1E",
+    "surfaceTertiary": "#E5E5EA",
+    "onSurfaceTertiary": "#3A3A3C",
+    "surfaceInverse": "#1C1C1E",
+    "onSurfaceInverse": "#FFFFFF",
+    "brand": "#2E4D40",
+    "brandPrimary": "#3B6352",
+    "onBrandPrimary": "#FFFFFF",
+    "brandSecondary": "#B9C6BE",
+    "onBrandSecondary": "#1C1C1E",
+    "brandTertiary": "#E7EFEB",
+    "onBrandTertiary": "#2E4D40",
+    "success": "#34C759",
+    "onSuccess": "#FFFFFF",
+    "warning": "#FF9500",
+    "onWarning": "#FFFFFF",
+    "error": "#FF3B30",
+    "onError": "#FFFFFF",
+    "info": "#007AFF",
+    "onInfo": "#FFFFFF",
+    "border": "#E5E5EA",
+    "borderStrong": "#C7C7CC",
+    "divider": "#E5E5EA"
+  },
+  "typography": {
+    "displayFontFamily": "Plus Jakarta Sans",
+    "textFontFamily": "Plus Jakarta Sans",
+    "scale": {
+      "sm": 12,
+      "base": 14,
+      "lg": 16,
+      "xl": 20,
+      "2xl": 24
+    }
+  },
+  "spacing": {
+    "rule": "Generous vertical breathing room. Cards never flush to screen edge; always use md or lg margin. Whitespace is intentional to group related data without heavy dividers.",
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24,
+    "2xl": 32,
+    "3xl": 48
+  },
+  "radius_tokens": {
+    "sm": 6,
+    "md": 12,
+    "lg": 20,
+    "pill": 999
+  },
+  "shadow_tier": "1",
+  "navigation": "bottom_tabs",
+  "icon_set": "Phosphor",
+  "glassmorphism": {
+    "enabled": true,
+    "do's": [
+      "Use glass on bottom tab bar, sticky headers over scrolling lists, and the centered FAB container",
+      "Ensure text on glass is fully readable by adding a subtle translucent base tint beneath the blur"
+    ],
+    "dont's": [
+      "Do not use glass on form inputs or generic list rows",
+      "Do not blur entire screens or body content"
+    ]
+  },
+  "platform_libraries": {
+    "glass": {
+      "ios": "expo-glass-effect",
+      "android": "expo-blur",
+      "low_end_android_fallback": "solid surfaceSecondary"
+    },
+    "image": "expo-image",
+    "blur": "expo-blur",
+    "bottom_sheet": "@gorhom/bottom-sheet",
+    "animation": "react-native-reanimated",
+    "gesture": "react-native-gesture-handler"
+  },
+  "screens": [
+    {
+      "name": "Home Dashboard",
+      "purpose": "A quick overview of monthly spending total, category breakdown chart, and recent transactions.",
+      "states": {
+        "loading": "Centered spinner over the chart area.",
+        "empty": "No spending yet! An illustration of an empty minimalist folder with a prompt to add a transaction.",
+        "error": "Failed to load dashboard data. Retry button centered."
+      },
+      "layout": "Sticky glass header (Title 'Dashboard' + current month). Hero card: Total Spent amount with a subtle gradient (brandTertiary to surfaceSecondary), rounded lg. Below it, a clean circular Donut chart for category breakdown with an inner label. Followed by a 'Recent Transactions' section header and a single column list of transaction cards. Transactions have a tinted icon container (brandTertiary) and amount on the right."
+    },
+    {
+      "name": "Add Expense (Scanner)",
+      "purpose": "Capture or upload a payment screenshot (UPI) with an AI-extraction preview and editable fields.",
+      "states": {
+        "loading": "Full-screen scanning animation overlay while AI extracts amount and merchant.",
+        "empty": "Camera viewfinder or gallery upload prompt.",
+        "error": "Couldn't read screenshot text. Show an error banner and allow manual entry."
+      },
+      "layout": "Camera-first layout with a full-bleed viewfinder overlay (edge guides). A persistent bottom sheet contains primary CTAs: 'Upload Photo', 'Scan', 'Enter Manually'. Post-scan, transition to a preview screen: top half shows the cropped screenshot receipt with a top-to-bottom gradient scrim, bottom half shows an editable form (Amount, Merchant Name, Category dropdown picker). Sticky 'Save Expense' CTA pinned to the bottom."
+    },
+    {
+      "name": "Transactions",
+      "purpose": "Scrollable list of all expenses with quick filters and search.",
+      "states": {
+        "loading": "Skeleton rows of transactions.",
+        "empty": "No transactions match the selected filters.",
+        "error": "Error fetching transactions. Tap to retry."
+      },
+      "layout": "Glass sticky header with a Search input field. Below search, a horizontal scrollable row of filter chips (pill shape, surfaceTertiary for inactive, brandPrimary for active). The main content is a single-column list of transaction rows. Implement swipe-to-delete on rows using react-native-gesture-handler."
+    },
+    {
+      "name": "Budgets",
+      "purpose": "Set monthly budgets per category and track remaining limits visually.",
+      "states": {
+        "loading": "Spinner in center.",
+        "empty": "Illustration with a CTA 'Set your first budget'.",
+        "error": "Could not load budgets. Retry button."
+      },
+      "layout": "List of budget cards. Each card displays the Category Icon, Title, and '₹Spent of ₹Total' on top. Below the text, a horizontal progress bar. The bar color adapts based on percentage: brandPrimary (safe), warning (>80%), error (>100%)."
+    }
+  ],
+  "images": {
+    "gpay_logo": {
+      "url": "https://images.unsplash.com/photo-1587906697341-bfbde76785c7?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDk1NzZ8MHwxfHNlYXJjaHwxfHxHUGF5JTIwbG9nbyUyMHRyYW5zcGFyZW50JTIwcG5nfGVufDB8fHx8MTc4MTQxNjIxOHww&ixlib=rb-4.1.0&q=85",
+      "alt": "GPay payment app context"
+    },
+    "upload_background": {
+      "url": "https://images.unsplash.com/photo-1712145176394-614207f639ae?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NzV8MHwxfHNlYXJjaHwxfHxibGFuayUyMHJlY2VpcHQlMjBwYXBlciUyMGFic3RyYWN0JTIwYmFja2dyb3VuZHxlbnwwfHx8fDE3ODE0MTYyMTh8MA&ixlib=rb-4.1.0&q=85",
+      "alt": "Blank receipt texture for scanner overlay context"
+    },
+    "empty_state_folder": {
+      "url": "https://images.unsplash.com/photo-1695634280931-c7fe426ebb19?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2Mzl8MHwxfHNlYXJjaHwxfHxlbXB0eSUyMHN0YXRlJTIwbWluaW1hbGlzdCUyMGZpbmFuY2UlMjBmb2xkZXJ8ZW58MHx8fHwxNzgxNDE2MjE4fDA&ixlib=rb-4.1.0&q=85",
+      "alt": "Minimalist folder for empty state"
+    }
+  },
+  "instructions_to_main_agent": [
+    "Strictly follow the iOS-Native Clean layout: ample padding, clear typography hierarchy, and a predominantly light theme with off-white (F2F2F7) background and stark white (FFFFFF) cards.",
+    "Do not use any blue, purple, or indigo anywhere. Stick to the brand palette (Moss Green, Charcoal, Off-White).",
+    "For the bottom navigation, place Home, Transactions, Budgets, and Insights in the bar, and float the 'Add' action as a prominent FAB layered in the center or above the tab bar.",
+    "The scanner screen should simulate a camera view using expo-camera if possible, or fall back to an image upload view. The preview should show the cropped receipt with a gradient scrim (top-to-bottom) ensuring the editable form overlaid beneath it is perfectly readable.",
+    "For the Budgets screen, strictly build the progress bars to change color contextually: brandPrimary normally, warning (orange) at 80%, error (red) at 100%.",
+    "Transactions must be a flat list of rows containing a leading tinted icon container (brandTertiary square with md radius), the merchant name, and the amount on the trailing edge. Include native swipe-to-delete.",
+    "When displaying a generic category icon, map categories to specific Phosphor icons (e.g., ForkKnife for Food, ShoppingCart for Groceries).",
+    "All primary CTAs (e.g., 'Save Expense') must be sticky at the bottom of the screen with proper Safe Area clearances and glassmorphism behind them to allow content to scroll underneath."
+  ]
+}
