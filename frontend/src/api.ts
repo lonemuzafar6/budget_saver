@@ -85,6 +85,43 @@ export const api = {
       `/alerts${month ? `?month=${month}` : ''}`
     ),
 
+  budgetSuggestions: (month?: string, lookback = 3) => {
+    const qs = new URLSearchParams();
+    if (month) qs.append('month', month);
+    qs.append('lookback', String(lookback));
+    return request<{
+      month: string;
+      lookback_months: string[];
+      suggestions: {
+        category: string;
+        avg: number;
+        months_with_data: number;
+        suggested_amount: number;
+        current_amount: number | null;
+        reason: string;
+      }[];
+      total: {
+        avg: number;
+        months_with_data: number;
+        suggested_amount: number;
+        current_amount: number | null;
+      };
+    }>(`/budget-suggestions?${qs.toString()}`);
+  },
+
+  trends: (months = 4) =>
+    request<{
+      months: string[];
+      series_total: { month: string; amount: number }[];
+      by_category: {
+        category: string;
+        values: number[];
+        total: number;
+        avg: number;
+      }[];
+      grand_total: number;
+    }>(`/trends?months=${months}`),
+
   scanScreenshot: (image_base64: string, mime_type = 'image/jpeg') =>
     request<{
       amount: number | null;

@@ -11,7 +11,7 @@ import {
   Platform,
   Image,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
@@ -25,13 +25,29 @@ import {
   CATEGORY_META,
   CategoryName,
   todayISO,
+  formatCurrency,
 } from '@/src/theme';
 
-type Mode = 'menu' | 'form' | 'scanning';
+type Mode = 'menu' | 'form' | 'scanning' | 'bulk-review';
+
+type BulkRow = {
+  key: string;
+  uri: string;
+  amount: string;
+  merchant: string;
+  category: CategoryName;
+  date: string;
+  selected: boolean;
+  status: 'scanning' | 'done' | 'error';
+  error?: string;
+};
 
 export default function AddExpenseScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const [mode, setMode] = useState<Mode>('menu');
+
+  // Single-screenshot state
   const [imageUri, setImageUri] = useState<string | null>(null);
   const [amount, setAmount] = useState('');
   const [merchant, setMerchant] = useState('');
@@ -40,6 +56,11 @@ export default function AddExpenseScreen() {
   const [category, setCategory] = useState<CategoryName>('Other');
   const [saving, setSaving] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
+
+  // Bulk state
+  const [bulkRows, setBulkRows] = useState<BulkRow[]>([]);
+  const [bulkProgress, setBulkProgress] = useState({ done: 0, total: 0 });
+  const [bulkSaving, setBulkSaving] = useState(false);
 
   const pickAndScan = async (source: 'camera' | 'library') => {
     setScanError(null);
@@ -100,6 +121,104 @@ export default function AddExpenseScreen() {
     }
   };
 
+  const pickBulk = async () => {
+    setScanError(null);
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) {
+      setScanError('Photos permission denied.');
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      base64: true,
+      quality: 0.6,
+      allowsMultipleSelection: true,
+      selectionLimit: 10,
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+    });
+    if (result.canceled || !result.assets?.length) return;
+
+    const rows: BulkRow[] = result.assets.map((a, i) => ({
+      key: `${Date.now()}-${i}`,
+      uri: a.uri,
+      amount: '',
+      merchant: '',
+      category: 'Other',
+      date: todayISO(),
+      selected: true,
+      status: 'scanning',
+    }));
+    setBulkRows(rows);
+    setBulkProgress({ done: 0, total: rows.length });
+    setMode('bulk-review');
+
+    // Scan each sequentially to keep API load sane
+    for (let i = 0; i < result.assets.length; i++) {
+      const asset = result.assets[i];
+      const b64 = asset.base64 || '';
+      const mime = asset.mimeType || 'image/jpeg';
+      try {
+        if (!b64) throw new Error('Image read failed');
+        const r = await api.scanScreenshot(b64, mime);
+        setBulkRows((prev) =>
+          prev.map((row, idx) =>
+            idx === i
+              ? {
+                  ...row,
+                  amount: r.amount != null ? String(r.amount) : row.amount,
+                  merchant: r.merchant || row.merchant,
+                  date: r.date || row.date,
+                  category:
+                    r.category && CATEGORIES.includes(r.category as any)
+                      ? (r.category as CategoryName)
+                      : row.category,
+                  status: r.success ? 'done' : 'error',
+                  error: r.success ? undefined : r.error || 'Scan failed',
+                  selected: r.success && !!r.amount,
+                }
+              : row
+          )
+        );
+      } catch (e: any) {
+        setBulkRows((prev) =>
+          prev.map((row, idx) =>
+            idx === i ? { ...row, status: 'error', error: e?.message || 'Scan failed', selected: false } : row
+          )
+        );
+      }
+      setBulkProgress({ done: i + 1, total: result.assets.length });
+    }
+  };
+
+  const updateBulkRow = (key: string, patch: Partial<BulkRow>) =>
+    setBulkRows((prev) => prev.map((r) => (r.key === key ? { ...r, ...patch } : r)));
+
+  const removeBulkRow = (key: string) =>
+    setBulkRows((prev) => prev.filter((r) => r.key !== key));
+
+  const saveBulk = async () => {
+    const valid = bulkRows.filter(
+      (r) => r.selected && r.status !== 'scanning' && parseFloat(r.amount) > 0
+    );
+    if (valid.length === 0) return;
+    setBulkSaving(true);
+    try {
+      await Promise.all(
+        valid.map((r) =>
+          api.createExpense({
+            amount: parseFloat(r.amount),
+            merchant: r.merchant.trim() || 'Unknown',
+            category: r.category,
+            date: r.date,
+            source: 'screenshot',
+          })
+        )
+      );
+      router.back();
+    } finally {
+      setBulkSaving(false);
+    }
+  };
+
   const save = async () => {
     const val = parseFloat(amount);
     if (!val || val <= 0) return;
@@ -121,6 +240,13 @@ export default function AddExpenseScreen() {
     }
   };
 
+  const selectedBulkCount = bulkRows.filter(
+    (r) => r.selected && r.status !== 'scanning' && parseFloat(r.amount || '0') > 0
+  ).length;
+  const selectedBulkSum = bulkRows
+    .filter((r) => r.selected && r.status !== 'scanning')
+    .reduce((s, r) => s + (parseFloat(r.amount || '0') || 0), 0);
+
   return (
     <SafeAreaView style={styles.container} testID="add-screen">
       <View style={styles.header}>
@@ -128,7 +254,11 @@ export default function AddExpenseScreen() {
           <Ionicons name="close" size={22} color={COLORS.onSurface} />
         </Pressable>
         <Text style={styles.title}>
-          {mode === 'form' && imageUri ? 'Review expense' : 'Add expense'}
+          {mode === 'form' && imageUri
+            ? 'Review expense'
+            : mode === 'bulk-review'
+            ? 'Review imports'
+            : 'Add expense'}
         </Text>
         <View style={{ width: 36 }} />
       </View>
@@ -145,7 +275,7 @@ export default function AddExpenseScreen() {
             onPress={() => pickAndScan('library')}
           >
             <View style={styles.optionIcon}>
-              <Ionicons name="images-outline" size={22} color={COLORS.onBrandPrimary} />
+              <Ionicons name="image-outline" size={22} color={COLORS.onBrandPrimary} />
             </View>
             <View style={{ flex: 1 }}>
               <Text style={[styles.optionTitle, { color: COLORS.onBrandPrimary }]}>
@@ -156,6 +286,21 @@ export default function AddExpenseScreen() {
               </Text>
             </View>
             <Ionicons name="chevron-forward" size={20} color={COLORS.onBrandPrimary} />
+          </Pressable>
+
+          <Pressable
+            testID="add-option-bulk"
+            style={[styles.option, { backgroundColor: COLORS.surfaceSecondary }]}
+            onPress={pickBulk}
+          >
+            <View style={[styles.optionIcon, { backgroundColor: COLORS.brandTertiary }]}>
+              <Ionicons name="images-outline" size={22} color={COLORS.brand} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.optionTitle}>Bulk import</Text>
+              <Text style={styles.optionDesc}>Pick up to 10 screenshots at once</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color={COLORS.muted} />
           </Pressable>
 
           <Pressable
@@ -204,6 +349,175 @@ export default function AddExpenseScreen() {
           )}
           <ActivityIndicator color={COLORS.brand} size="large" style={{ marginTop: 16 }} />
           <Text style={styles.scanningText}>Reading receipt with Claude…</Text>
+        </View>
+      )}
+
+      {mode === 'bulk-review' && (
+        <View style={{ flex: 1 }}>
+          <ScrollView
+            contentContainerStyle={{
+              padding: SPACING.lg,
+              paddingBottom: 140 + insets.bottom,
+            }}
+          >
+            <View style={styles.bulkBanner}>
+              <Ionicons
+                name={bulkProgress.done < bulkProgress.total ? 'scan-outline' : 'checkmark-circle'}
+                size={18}
+                color={COLORS.brand}
+              />
+              <Text style={styles.bulkBannerText}>
+                {bulkProgress.done < bulkProgress.total
+                  ? `Scanning ${bulkProgress.done}/${bulkProgress.total}…`
+                  : `Scanned ${bulkProgress.total} screenshot(s). Review and save.`}
+              </Text>
+            </View>
+
+            {bulkRows.map((row) => {
+              const meta = CATEGORY_META[row.category] || CATEGORY_META.Other;
+              const isScanning = row.status === 'scanning';
+              return (
+                <View key={row.key} style={styles.bulkCard} testID={`bulk-row-${row.key}`}>
+                  <View style={styles.bulkHead}>
+                    <Image source={{ uri: row.uri }} style={styles.bulkThumb} />
+                    <View style={{ flex: 1 }}>
+                      {isScanning ? (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <ActivityIndicator size="small" color={COLORS.brand} />
+                          <Text style={styles.bulkScanning}>Scanning…</Text>
+                        </View>
+                      ) : row.status === 'error' ? (
+                        <Text style={styles.bulkError}>
+                          {row.error || 'Could not scan'} — edit manually
+                        </Text>
+                      ) : (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <Ionicons name="checkmark-circle" size={14} color={COLORS.success} />
+                          <Text style={styles.bulkOk}>AI-filled</Text>
+                        </View>
+                      )}
+                    </View>
+                    <View style={{ flexDirection: 'row', gap: 8 }}>
+                      <Pressable
+                        testID={`bulk-toggle-${row.key}`}
+                        onPress={() => updateBulkRow(row.key, { selected: !row.selected })}
+                        style={[
+                          styles.checkbox,
+                          row.selected && {
+                            backgroundColor: COLORS.brandPrimary,
+                            borderColor: COLORS.brandPrimary,
+                          },
+                        ]}
+                      >
+                        {row.selected && (
+                          <Ionicons name="checkmark" size={14} color={COLORS.onBrandPrimary} />
+                        )}
+                      </Pressable>
+                      <Pressable
+                        testID={`bulk-remove-${row.key}`}
+                        onPress={() => removeBulkRow(row.key)}
+                        style={styles.bulkRemove}
+                      >
+                        <Ionicons name="close" size={16} color={COLORS.error} />
+                      </Pressable>
+                    </View>
+                  </View>
+
+                  <View style={styles.bulkFields}>
+                    <View style={styles.bulkFieldHalf}>
+                      <Text style={styles.bulkLabel}>Amount</Text>
+                      <View style={styles.bulkAmountWrap}>
+                        <Text style={styles.bulkCurrency}>₹</Text>
+                        <TextInput
+                          testID={`bulk-amount-${row.key}`}
+                          style={styles.bulkAmountInput}
+                          value={row.amount}
+                          onChangeText={(t) => updateBulkRow(row.key, { amount: t })}
+                          keyboardType="decimal-pad"
+                          placeholder="0"
+                          placeholderTextColor={COLORS.muted}
+                        />
+                      </View>
+                    </View>
+                    <View style={styles.bulkFieldHalf}>
+                      <Text style={styles.bulkLabel}>Merchant</Text>
+                      <TextInput
+                        testID={`bulk-merchant-${row.key}`}
+                        style={styles.bulkInput}
+                        value={row.merchant}
+                        onChangeText={(t) => updateBulkRow(row.key, { merchant: t })}
+                        placeholder="Merchant"
+                        placeholderTextColor={COLORS.muted}
+                      />
+                    </View>
+                  </View>
+
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={{ gap: 6, paddingTop: 6 }}
+                  >
+                    {CATEGORIES.map((c) => {
+                      const active = row.category === c;
+                      const m = CATEGORY_META[c];
+                      return (
+                        <Pressable
+                          key={c}
+                          testID={`bulk-cat-${row.key}-${c}`}
+                          onPress={() => updateBulkRow(row.key, { category: c })}
+                          style={[
+                            styles.bulkCatChip,
+                            active && { backgroundColor: m.tint, borderColor: m.color },
+                          ]}
+                        >
+                          <Ionicons
+                            name={m.icon as any}
+                            size={12}
+                            color={active ? m.color : COLORS.muted}
+                          />
+                          <Text
+                            style={[
+                              styles.bulkCatText,
+                              active && { color: m.color, fontWeight: '700' },
+                            ]}
+                          >
+                            {c}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </ScrollView>
+                </View>
+              );
+            })}
+
+            {bulkRows.length === 0 && (
+              <Text style={styles.emptyText}>No screenshots selected.</Text>
+            )}
+          </ScrollView>
+
+          <View style={[styles.footer, { paddingBottom: SPACING.lg + insets.bottom }]}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.footerLabel}>
+                {selectedBulkCount} ready • {formatCurrency(selectedBulkSum)}
+              </Text>
+            </View>
+            <Pressable
+              testID="bulk-save-all"
+              disabled={selectedBulkCount === 0 || bulkSaving}
+              style={[
+                styles.applyBtn,
+                (selectedBulkCount === 0 || bulkSaving) && { opacity: 0.6 },
+              ]}
+              onPress={saveBulk}
+            >
+              {bulkSaving ? (
+                <ActivityIndicator color={COLORS.onBrandPrimary} />
+              ) : (
+                <Text style={styles.applyBtnText}>Save {selectedBulkCount}</Text>
+              )}
+            </Pressable>
+          </View>
         </View>
       )}
 
@@ -311,7 +625,7 @@ export default function AddExpenseScreen() {
             />
           </ScrollView>
 
-          <View style={styles.footer}>
+          <View style={styles.footerSimple}>
             <Pressable
               testID="form-save"
               style={[styles.saveBtn, (!amount || saving) && { opacity: 0.6 }]}
@@ -369,7 +683,12 @@ const styles = StyleSheet.create({
   optionTitle: { fontSize: 15, fontWeight: '700', color: COLORS.onSurface },
   optionDesc: { fontSize: 12, color: COLORS.muted, marginTop: 2 },
   scanningBox: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: SPACING.lg },
-  previewImg: { width: '70%', height: 280, borderRadius: RADIUS.md, backgroundColor: COLORS.surfaceTertiary },
+  previewImg: {
+    width: '70%',
+    height: 280,
+    borderRadius: RADIUS.md,
+    backgroundColor: COLORS.surfaceTertiary,
+  },
   scanningText: { color: COLORS.brand, marginTop: 12, fontWeight: '600' },
   previewWrap: {
     flexDirection: 'row',
@@ -441,11 +760,25 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: SPACING.lg,
+    backgroundColor: COLORS.surface,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: COLORS.border,
+    gap: SPACING.md,
+  },
+  footerSimple: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
     padding: SPACING.lg,
     backgroundColor: COLORS.surface,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: COLORS.border,
   },
+  footerLabel: { color: COLORS.muted, fontSize: 13, fontWeight: '600' },
   saveBtn: {
     backgroundColor: COLORS.brandPrimary,
     height: 52,
@@ -454,4 +787,99 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   saveBtnText: { color: COLORS.onBrandPrimary, fontSize: 16, fontWeight: '700' },
+  applyBtn: {
+    backgroundColor: COLORS.brandPrimary,
+    paddingHorizontal: SPACING.xl,
+    height: 48,
+    borderRadius: RADIUS.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 130,
+  },
+  applyBtnText: { color: COLORS.onBrandPrimary, fontWeight: '700', fontSize: 15 },
+  bulkBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: COLORS.brandTertiary,
+    padding: SPACING.md,
+    borderRadius: RADIUS.md,
+    marginBottom: SPACING.md,
+  },
+  bulkBannerText: { color: COLORS.brand, fontWeight: '600', fontSize: 13, flex: 1 },
+  bulkCard: {
+    backgroundColor: COLORS.surfaceSecondary,
+    borderRadius: RADIUS.md,
+    padding: SPACING.md,
+    marginBottom: SPACING.md,
+  },
+  bulkHead: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: SPACING.sm },
+  bulkThumb: {
+    width: 48,
+    height: 48,
+    borderRadius: RADIUS.sm,
+    backgroundColor: COLORS.surfaceTertiary,
+  },
+  bulkScanning: { color: COLORS.brand, fontSize: 12, fontWeight: '600' },
+  bulkOk: { color: COLORS.success, fontSize: 12, fontWeight: '700' },
+  bulkError: { color: COLORS.error, fontSize: 12, fontWeight: '600', flexShrink: 1 },
+  checkbox: {
+    width: 26,
+    height: 26,
+    borderRadius: 8,
+    borderWidth: 2,
+    borderColor: COLORS.borderStrong,
+    backgroundColor: COLORS.surfaceSecondary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  bulkRemove: {
+    width: 26,
+    height: 26,
+    borderRadius: RADIUS.pill,
+    backgroundColor: COLORS.surfaceTertiary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  bulkFields: { flexDirection: 'row', gap: 8 },
+  bulkFieldHalf: { flex: 1 },
+  bulkLabel: {
+    fontSize: 10,
+    color: COLORS.muted,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  bulkAmountWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.surface,
+    borderRadius: RADIUS.sm,
+    paddingHorizontal: SPACING.sm,
+    height: 40,
+  },
+  bulkCurrency: { color: COLORS.muted, fontSize: 14, marginRight: 4 },
+  bulkAmountInput: { flex: 1, color: COLORS.onSurface, fontSize: 14, fontWeight: '700' },
+  bulkInput: {
+    backgroundColor: COLORS.surface,
+    borderRadius: RADIUS.sm,
+    paddingHorizontal: SPACING.sm,
+    height: 40,
+    color: COLORS.onSurface,
+    fontSize: 13,
+  },
+  bulkCatChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    height: 28,
+    borderRadius: RADIUS.pill,
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  bulkCatText: { color: COLORS.onSurfaceTertiary, fontSize: 11 },
+  emptyText: { color: COLORS.muted, textAlign: 'center', marginTop: SPACING.xl },
 });

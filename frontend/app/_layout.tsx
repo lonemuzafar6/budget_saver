@@ -35,6 +35,10 @@ export default function RootLayout() {
             name="expense/[id]"
             options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
           />
+          <Stack.Screen
+            name="budget-suggestions"
+            options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
+          />
         </Stack>
       </SafeAreaProvider>
     </GestureHandlerRootView>

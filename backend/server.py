@@ -116,6 +116,19 @@ def _current_month() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m")
 
 
+def _prev_month_str(ym: str, n: int) -> str:
+    y, m = map(int, ym.split("-"))
+    total = y * 12 + (m - 1) - n
+    ny, nm = divmod(total, 12)
+    return f"{ny:04d}-{nm + 1:02d}"
+
+
+def _round_to_hundred(x: float) -> int:
+    if x <= 0:
+        return 0
+    return int(((x + 99) // 100) * 100)
+
+
 def _serialize(doc: dict) -> dict:
     if not doc:
         return doc
@@ -479,6 +492,133 @@ async def get_alerts(month: Optional[str] = None):
 
     alerts = _compute_alerts(total, total_budget, budgets, by_category)
     return {"month": target_month, "alerts": alerts, "count": len(alerts)}
+
+
+# ----- Budget Suggestions -----
+@api_router.get("/budget-suggestions")
+async def budget_suggestions(month: Optional[str] = None, lookback: int = 3):
+    target_month = month or _current_month()
+    lookback = max(1, min(6, int(lookback)))
+
+    # Gather lookback prior months data
+    months = [_prev_month_str(target_month, i) for i in range(1, lookback + 1)]
+    sums: dict = {c: [] for c in CATEGORIES}
+    total_per_month: dict = {m: 0.0 for m in months}
+
+    for m in months:
+        cursor = db.expenses.find({"date": {"$regex": f"^{m}"}}, {"_id": 0})
+        items = await cursor.to_list(5000)
+        per_cat: dict = {}
+        for it in items:
+            cat = it.get("category", "Other")
+            if cat not in CATEGORIES:
+                cat = "Other"
+            amt = float(it.get("amount", 0))
+            per_cat[cat] = per_cat.get(cat, 0.0) + amt
+            total_per_month[m] += amt
+        for c in CATEGORIES:
+            sums[c].append(per_cat.get(c, 0.0))
+
+    # Current budgets for the target month
+    bcursor = db.budgets.find({"month": target_month}, {"_id": 0})
+    current_budgets = await bcursor.to_list(100)
+    cur_by_cat: dict = {b["category"]: b for b in current_budgets}
+
+    suggestions = []
+    for cat in CATEGORIES:
+        vals = sums[cat]
+        non_zero = [v for v in vals if v > 0]
+        if non_zero:
+            avg = sum(non_zero) / len(non_zero)
+            suggested = _round_to_hundred(avg * 1.1)  # 10% buffer
+        else:
+            avg = 0.0
+            suggested = 0
+        cur = cur_by_cat.get(cat)
+        suggestions.append(
+            {
+                "category": cat,
+                "avg": round(avg, 2),
+                "months_with_data": len(non_zero),
+                "suggested_amount": suggested,
+                "current_amount": float(cur["amount"]) if cur else None,
+                "reason": (
+                    f"Based on \u20B9{int(avg)} avg/month across {len(non_zero)} prior month(s) + 10% buffer"
+                    if non_zero
+                    else "No prior spending in this category"
+                ),
+            }
+        )
+
+    # Total suggested
+    total_avg_vals = [t for t in total_per_month.values() if t > 0]
+    total_avg = (sum(total_avg_vals) / len(total_avg_vals)) if total_avg_vals else 0
+    total_suggested = _round_to_hundred(total_avg * 1.1)
+
+    # Existing total budget for target month
+    cur_total = await _get_total_budget(target_month)
+
+    return {
+        "month": target_month,
+        "lookback_months": months,
+        "suggestions": suggestions,
+        "total": {
+            "avg": round(total_avg, 2),
+            "months_with_data": len(total_avg_vals),
+            "suggested_amount": total_suggested,
+            "current_amount": float(cur_total["amount"]) if cur_total else None,
+        },
+    }
+
+
+# ----- Trends -----
+@api_router.get("/trends")
+async def trends(months: int = 4, end_month: Optional[str] = None):
+    months = max(2, min(12, int(months)))
+    last = end_month or _current_month()
+    ym_list = [_prev_month_str(last, i) for i in range(months - 1, -1, -1)]
+
+    series_total: List[dict] = []
+    by_category: dict = {c: [] for c in CATEGORIES}
+
+    for ym in ym_list:
+        cursor = db.expenses.find({"date": {"$regex": f"^{ym}"}}, {"_id": 0})
+        items = await cursor.to_list(5000)
+        month_total = 0.0
+        per_cat: dict = {c: 0.0 for c in CATEGORIES}
+        for it in items:
+            cat = it.get("category", "Other")
+            if cat not in CATEGORIES:
+                cat = "Other"
+            amt = float(it.get("amount", 0))
+            per_cat[cat] += amt
+            month_total += amt
+        series_total.append({"month": ym, "amount": round(month_total, 2)})
+        for c in CATEGORIES:
+            by_category[c].append(round(per_cat[c], 2))
+
+    # Build per-category response: only return categories with any spend
+    cat_series = []
+    for c in CATEGORIES:
+        if any(v > 0 for v in by_category[c]):
+            total_c = sum(by_category[c])
+            cat_series.append(
+                {
+                    "category": c,
+                    "values": by_category[c],
+                    "total": round(total_c, 2),
+                    "avg": round(total_c / months, 2),
+                }
+            )
+    cat_series.sort(key=lambda x: x["total"], reverse=True)
+
+    grand_total = sum(p["amount"] for p in series_total)
+    return {
+        "months": ym_list,
+        "series_total": series_total,
+        "by_category": cat_series,
+        "grand_total": round(grand_total, 2),
+    }
 
 
 # ----- Scan Screenshot -----

@@ -1,0 +1,44 @@
+{
+  "summary": "Iteration 3 (SMART AUTO-BUDGETS + BULK IMPORT + MULTI-MONTH TRENDS) fully tested. Backend: 46/46 pytest passing including 12 NEW tests in /app/backend/tests/test_suggestions_trends.py (7 for GET /api/budget-suggestions, 5 for GET /api/trends) plus full regression of iteration 1+2 (34 tests). Seeded multi-month expenses for Food (200/400/600 across 3 prior months), Transport (100/300 in 2 months), Bills (1000 in 1 month) — verified avg uses non-zero months only, suggested_amount = ceil(avg*1.1 / 100)*100, 'No prior spending' reason when months_with_data=0, lookback clamped to [1,6], total avg & total_suggested correct (e.g. (300+1400+900)/3=866.67 *1.1=953.33 → 1000). For /api/trends: shape verified, months clamped to [2,12], per-month series sums match seeded data, by_category includes only categories with spend and avg=total/months, grand_total equals sum(series_total).\n\nFrontend (mobile 390x844): After Expo restart (stale bundle initially hid the new icons), all new flows verified end-to-end. Budgets screen now shows sparkles 'suggest budgets' icon (budgets-suggest-btn) + bell side by side. Tapping opens /budget-suggestions modal which lists Total monthly budget (₹3,600 — 'Avg ₹3,200/mo across 3 month(s)') and Food (₹2,500), Shopping (₹1,400), Transport (₹700) cards with reasons + checkboxes + Select all/Clear toggles. 'Apply 4' tapped → POST /api/budgets x3 + POST /api/settings/total-budget → navigates back; Budgets screen instantly reflects Total ₹3,600 / Food ₹2,500 / Shopping ₹1,400 / Transport ₹700.\n\nInsights tab: NEW 'This month ₹2,724 ▼ 9% vs last' card replaces old Total spent card. 'Monthly spend trend' line chart with 3M/4M/6M chips — switching 4M↔6M re-renders chart with month labels (Mar/Apr/May/Jun for 4M; Jan..Jun for 6M). 'Category trends' section shows per-category rows (Food, Shopping, Health, Transport, Other, Entertainment) each with sparkline + avg/mo + last-month amount + delta % (e.g. Food 'Avg ₹1,100/mo ▼ 100%'). Top categories list still renders below.\n\nAdd screen: NEW 'Bulk import' option present with testID add-option-bulk (alongside manual + screenshot options). Bulk-review mode supports thumbs, AI-fill status, editable amount/merchant/category and Save N — not exercised live (file-picker is non-interactive in playwright) but code path inspected (mode='bulk-review', testIDs bulk-row-{key}, bulk-toggle-{key}, bulk-remove-{key}, bulk-amount-{key}, bulk-merchant-{key}, bulk-cat-{key}-{Cat}, bulk-save-all all present).\n\nAll testIDs from review_request verified present. No red screens, no API errors. Regression: dashboard, expenses CRUD, budgets CRUD, alerts, single scan-screenshot all still work.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "shadow* style props", "issue": "RN-web deprecation warning: '\"shadow*\" style props are deprecated. Use \"boxShadow\".' (pre-existing from iter 1+2, still not migrated)"},
+      {"component": "pointerEvents prop", "issue": "RN-web deprecation warning: 'props.pointerEvents is deprecated. Use style.pointerEvents' (pre-existing from iter 1+2, still not migrated)"}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_suggestions_trends.py",
+    "/app/backend/tests/test_alerts_budgets.py",
+    "/app/backend/tests/test_backend.py",
+    "/app/test_reports/pytest/pytest_iter3.xml"
+  ],
+  "action_items": [
+    "(Pre-existing carry-over) migrate shadow* style props to boxShadow and pointerEvents prop to style.pointerEvents to silence RN-web deprecations.",
+    "(Pre-existing carry-over) remove the extraneous Stack.Screen name=\"budget-edit\" entry in /app/frontend/app/_layout.tsx (no matching route file).",
+    "(Operational note for future iterations) Metro is running in CI mode with reloads disabled. After editing frontend code, restart Expo via 'sudo supervisorctl restart expo' or the bundle will be stale and new testIDs will not appear in the rendered web preview."
+  ],
+  "critical_code_review_comments": [
+    "Budget suggestions math is correct: avg over non-zero months only, _round_to_hundred is a CEILING-to-100 (((x+99)//100)*100), so 220→300, 953→1000. Reason string is accurate ('Based on ₹X avg/month across N prior month(s) + 10% buffer').",
+    "GET /api/budget-suggestions always returns all 8 categories — frontend correctly filters to suggested_amount>0 via the eligible memo before rendering rows.",
+    "GET /api/trends: months clamp [2,12] enforced server-side; by_category sorted by total desc; categories with all-zero values excluded — clean response.",
+    "BudgetSuggestions screen handles the empty-history case (hasAny=false) with a proper empty state + 'Got it' CTA. Apply uses Promise.all for parallel POSTs which is fast.",
+    "Insights uses /api/trends?months={3|4|6} on chip change — useMemo over series_total/by_category, sparkline drawn from values[] proportional to max — no hardcoded magic.",
+    "Bulk import flow in add.tsx scans sequentially (good for rate-limit safety on LLM) with per-row 'scanning/done/error' state, editable fields before bulk save, and a 'Save N' that POSTs N expenses in parallel."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_suggestions_trends.py (new)"
+  ],
+  "success_rate": {"backend": "100% (46/46)", "frontend": "100% (all flows verified after expo restart)"},
+  "seed_data_creation": "Backend tests seed TEST_SUG_* expenses across 3 prior months (Apr/May/Jun 2024) and TEST_TRD_* expenses across Aug-Nov 2024, cleaned up in teardown_class. UI test seeded 6 TEST_UI_* expenses across prior 3 months and cleaned them + created budgets + total budget after the run.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Iter 3 added: GET /api/budget-suggestions[?month=YYYY-MM&lookback=3] and GET /api/trends[?months=4&end_month=YYYY-MM]. New screen /budget-suggestions.tsx with testIDs suggestions-screen, suggestion-total, suggestion-{Cat}, suggestions-select-all, suggestions-clear-all, suggestions-apply, suggestions-close, suggestions-go-back. Budgets header has new budgets-suggest-btn. Insights screen rewritten with range chips (range-3/4/6), monthly line chart, 'This month' stat with delta vs last month, and per-category sparkline rows (trend-{Cat}). Add screen has new add-option-bulk + bulk-review mode (bulk-row-{key}, bulk-toggle-{key}, bulk-remove-{key}, bulk-amount-{key}, bulk-merchant-{key}, bulk-cat-{key}-{Cat}, bulk-save-all). EXPO_PUBLIC_BACKEND_URL = https://smart-receipt-parser-2.preview.emergentagent.com. Tests: pytest /app/backend/tests/ runs all 46. NOTE: Metro is in CI mode — after frontend edits ALWAYS restart expo before browser testing.",
+  "rca_of_issue": "N/A — no functional bugs. The only hiccup during testing was a stale Metro bundle: the first browser run did not show budgets-suggest-btn / range chips / add-option-bulk even though the source code contained them. Root cause: Metro is started with CI=true (reloads disabled), so any frontend code change requires 'sudo supervisorctl restart expo'. After restart, all new testIDs rendered correctly."
+}
