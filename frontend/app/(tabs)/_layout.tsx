@@ -2,11 +2,15 @@ import { Tabs, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Pressable, StyleSheet, View, Platform } from 'react-native';
 import { BlurView } from 'expo-blur';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { COLORS, RADIUS } from '@/src/theme';
 
 export default function TabsLayout() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
+  // Android gesture / 3-button nav inset (also handles iPhone home-indicator).
+  const bottomInset = insets.bottom;
 
   return (
     <View style={{ flex: 1 }}>
@@ -21,9 +25,9 @@ export default function TabsLayout() {
             left: 0,
             right: 0,
             bottom: 0,
-            height: 78,
-            paddingBottom: 18,
-            paddingTop: 10,
+            height: 60 + bottomInset,
+            paddingBottom: Math.max(bottomInset, 8),
+            paddingTop: 8,
             borderTopWidth: StyleSheet.hairlineWidth,
             borderTopColor: COLORS.border,
             backgroundColor:
