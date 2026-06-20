@@ -10,13 +10,13 @@ import io
 import json
 import logging
 import uuid
+import asyncio
+import requests
 from calendar import monthrange
 from pathlib import Path
 from pydantic import BaseModel, Field
 from typing import List, Optional
 from datetime import datetime, timezone, date as date_cls
-
-from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
 
 
 ROOT_DIR = Path(__file__).parent
@@ -27,7 +27,11 @@ mongo_url = os.environ["MONGO_URL"]
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ["DB_NAME"]]
 
-EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
+OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "anthropic/claude-sonnet-4.5")
+OPENROUTER_APP_URL = os.environ.get("OPENROUTER_APP_URL", "")
+OPENROUTER_APP_TITLE = os.environ.get("OPENROUTER_APP_TITLE", "BudgetSnavings")
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 # ---------- App ----------
 app = FastAPI()
@@ -707,30 +711,75 @@ def _extract_json_blob(text: str) -> Optional[dict]:
     return None
 
 
+def _call_openrouter_vision(image_base64: str, system_prompt: str, user_text: str) -> str:
+    """Synchronous OpenRouter Vision call. Returns assistant message string."""
+    if not OPENROUTER_API_KEY:
+        raise RuntimeError("OPENROUTER_API_KEY not configured")
+
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    if OPENROUTER_APP_URL:
+        headers["HTTP-Referer"] = OPENROUTER_APP_URL
+    if OPENROUTER_APP_TITLE:
+        headers["X-Title"] = OPENROUTER_APP_TITLE
+
+    # Strip any data URL prefix if present
+    b64 = image_base64
+    if b64.startswith("data:"):
+        try:
+            b64 = b64.split(",", 1)[1]
+        except Exception:
+            pass
+
+    payload = {
+        "model": OPENROUTER_MODEL,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": user_text},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
+                    },
+                ],
+            },
+        ],
+        "max_tokens": 600,
+        "temperature": 0.1,
+    }
+
+    resp = requests.post(OPENROUTER_URL, headers=headers, json=payload, timeout=60)
+    if resp.status_code >= 400:
+        raise RuntimeError(f"OpenRouter {resp.status_code}: {resp.text[:300]}")
+    data = resp.json()
+    try:
+        return data["choices"][0]["message"]["content"] or ""
+    except (KeyError, IndexError, TypeError) as exc:
+        raise RuntimeError(f"OpenRouter unexpected response: {str(data)[:300]}") from exc
+
+
 @api_router.post("/scan-screenshot", response_model=ScanResponse)
 async def scan_screenshot(body: ScanRequest):
-    if not EMERGENT_LLM_KEY:
-        raise HTTPException(status_code=500, detail="LLM key not configured")
+    if not OPENROUTER_API_KEY:
+        raise HTTPException(status_code=500, detail="OpenRouter key not configured")
     if not body.image_base64:
         raise HTTPException(status_code=400, detail="image_base64 is required")
 
     try:
-        chat = LlmChat(
-            api_key=EMERGENT_LLM_KEY,
-            session_id=f"scan-{uuid.uuid4()}",
-            system_message=SCAN_SYSTEM_PROMPT,
-        ).with_model("anthropic", "claude-sonnet-4-5-20250929")
-
-        image = ImageContent(image_base64=body.image_base64)
-        user_msg = UserMessage(
-            text=(
-                "Extract amount, merchant, date and category from this payment "
-                "screenshot. Return only the JSON object."
-            ),
-            file_contents=[image],
+        user_text = (
+            "Extract amount, merchant, date and category from this payment "
+            "screenshot. Return only the JSON object."
         )
-        raw = await chat.send_message(user_msg)
-        raw_text = raw if isinstance(raw, str) else str(raw)
+        raw_text = await asyncio.to_thread(
+            _call_openrouter_vision,
+            body.image_base64,
+            SCAN_SYSTEM_PROMPT,
+            user_text,
+        )
         data = _extract_json_blob(raw_text) or {}
 
         amount = data.get("amount")
