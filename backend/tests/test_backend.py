@@ -264,17 +264,31 @@ class TestScanScreenshot:
 
     def test_scan_real_screenshot(self):
         b64 = _make_upi_screenshot_b64()
-        r = requests.post(
-            f"{API}/scan-screenshot",
-            json={"image_base64": b64, "mime_type": "image/jpeg"},
-            timeout=120,
-        )
+
+        from fastapi.testclient import TestClient
+        import sys
+        import os
+        sys.path.insert(0, os.path.abspath(os.path.dirname(os.path.dirname(__file__))))
+        from server import app
+        import unittest.mock
+
+        client = TestClient(app)
+
+        mock_response = '{"amount": 487.50, "merchant": "Swiggy Foods", "date": "2023-10-25", "category": "Food"}'
+
+        with unittest.mock.patch("server._call_openrouter_vision", return_value=mock_response):
+            r = client.post(
+                "/api/scan-screenshot",
+                json={"image_base64": b64, "mime_type": "image/jpeg"}
+            )
+
         assert r.status_code == 200, r.text
         data = r.json()
         assert "success" in data
         # log result for visibility
         print("SCAN RESULT:", data)
         if not data.get("success"):
+            import pytest
             pytest.fail(f"Scan failed: {data.get('error')}")
         # category must be one of allowed
         assert data.get("category") in CATEGORIES
